@@ -56,3 +56,13 @@
 - desktopCapturer統合：main.jsでIPC ハンドラー実装、preload.jsで公開
 - 各レイヤーの実際映像をマスターレイヤーに流し込み：ネイティブキャプチャで実現
 - マスターレイヤーのPiP：完全に動作、キャプチャストリーム優先、Canvas fallback対応
+
+# ビルド版対応
+- package.jsonでpreload, youtube-viewファイルをビルドに含める
+- macOS entitlements.plistで画面録画等の権限を設定
+- プロダクション版でCtrl+Shift+Iで開発者コンソール開放
+- Settings画面でYouTube API キー設定機能実装
+- localStorageでAPIキー保存、環境変数からのフォールバック対応
+
+# pnpm run devでは、権限を付与することができない。
+# pnpm run buildした後、dmgを開かないとキャプチャ権限がない。

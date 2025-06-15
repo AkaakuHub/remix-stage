@@ -25,5 +25,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Desktop capture methods
   getDesktopSources: () => ipcRenderer.invoke('get-desktop-sources'),
-  captureView: (viewType) => ipcRenderer.invoke('capture-view', viewType)
+  captureView: (viewType) => ipcRenderer.invoke('capture-view', viewType),
+  captureYouTubeView: (layerId) => ipcRenderer.invoke('capture-youtube-view', layerId),
+  captureYouTubeWindow: (layerId) => ipcRenderer.invoke('capture-youtube-window', layerId)
 });

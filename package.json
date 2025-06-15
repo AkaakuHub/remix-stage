@@ -51,11 +51,16 @@
     },
     "files": [
       "src/main/**/*",
+      "src/preload/**/*",
+      "src/youtube-view/**/*",
       "src/renderer/build/**/*",
       "package.json"
     ],
     "mac": {
-      "category": "public.app-category.music"
+      "category": "public.app-category.music",
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
+      "hardenedRuntime": true
     },
     "win": {
       "target": "nsis"

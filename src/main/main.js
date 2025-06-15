@@ -7,9 +7,15 @@ app.setAsDefaultProtocolClient('remixstage');
 
 let mainWindow;
 let mainView;
+// Legacy YouTube view for compatibility
 let youtubeView;
+// New approach: Dedicated frameless BrowserWindows for YouTube capture
+let youtubeWindowA; // Dedicated window for YouTube Layer A
+let youtubeWindowB; // Dedicated window for YouTube Layer B
 let mainViewLoaded = false;
 let youtubeViewLoaded = false;
+let youtubeWindowALoaded = false;
+let youtubeWindowBLoaded = false;
 
 // Security configuration following best practices
 const createSecureWebPreferences = () => ({
@@ -19,10 +25,10 @@ const createSecureWebPreferences = () => ({
   preload: path.join(__dirname, '../preload/preload.js')
 });
 
-// Function to show window when both views are ready
+// Function to show window when all views are ready
 function checkAndShowWindow() {
-  if (mainViewLoaded && youtubeViewLoaded && mainWindow) {
-    console.log('Both views loaded, showing window');
+  if (mainViewLoaded && youtubeViewLoaded && youtubeWindowALoaded && youtubeWindowBLoaded && mainWindow) {
+    console.log('All views and YouTube windows loaded, showing window');
     mainWindow.show();
     if (mainWindow.isMinimized()) {
       mainWindow.restore();
@@ -54,6 +60,8 @@ function createWindow() {
   // Reset load states
   mainViewLoaded = false;
   youtubeViewLoaded = false;
+  youtubeWindowALoaded = false;
+  youtubeWindowBLoaded = false;
 
   // Create main window
   mainWindow = new BrowserWindow({
@@ -76,7 +84,7 @@ function createWindow() {
     webPreferences: createSecureWebPreferences()
   });
 
-  // Create isolated WebContentsView for YouTube IFrame Player
+  // Create isolated WebContentsView for YouTube IFrame Player (legacy compatibility)
   youtubeView = new WebContentsView({
     webPreferences: {
       contextIsolation: true,
@@ -86,7 +94,41 @@ function createWindow() {
     }
   });
 
-  // Add views to main window
+  // Create dedicated frameless BrowserWindows for YouTube capture
+  // These will be positioned off-screen for pure video capture
+  const youtubeWindowConfig = {
+    width: 1280,
+    height: 720,
+    x: -1300, // Position off-screen to the left
+    y: 0,
+    frame: false, // Frameless for clean capture
+    show: false, // Start hidden, will show when needed
+    skipTaskbar: true, // Don't show in taskbar
+    alwaysOnTop: false,
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false, // Need to disable sandbox for YouTube
+      webSecurity: false, // May need to disable for YouTube embedding
+      preload: path.join(__dirname, '../preload/youtube-window-preload.js')
+    }
+  };
+
+  // YouTube Window A (Layer 1)
+  youtubeWindowA = new BrowserWindow({
+    ...youtubeWindowConfig,
+    y: 0,
+    title: 'YouTube Layer A'
+  });
+
+  // YouTube Window B (Layer 2) 
+  youtubeWindowB = new BrowserWindow({
+    ...youtubeWindowConfig,
+    y: 750, // Position below Window A
+    title: 'YouTube Layer B'
+  });
+
+  // Add main view to main window
   mainWindow.contentView.addChildView(mainView);
   mainWindow.contentView.addChildView(youtubeView);
   
@@ -110,11 +152,23 @@ function createWindow() {
   } else {
     console.log('Loading production build from:', path.join(__dirname, '../renderer/build/index.html'));
     mainView.webContents.loadFile(path.join(__dirname, '../renderer/build/index.html'));
+    
+    // Enable DevTools in production with keyboard shortcut
+    mainWindow.webContents.on('before-input-event', (event, input) => {
+      if (input.control && input.shift && input.key.toLowerCase() === 'i') {
+        mainView.webContents.openDevTools();
+      }
+    });
   }
 
-  // Load YouTube view HTML
-  console.log('Loading YouTube view from:', path.join(__dirname, '../youtube-view/youtube.html'));
+  // Load YouTube view HTML for legacy compatibility
+  console.log('Loading legacy YouTube view from:', path.join(__dirname, '../youtube-view/youtube.html'));
   youtubeView.webContents.loadFile(path.join(__dirname, '../youtube-view/youtube.html'));
+
+  // Load dedicated YouTube windows
+  console.log('Loading YouTube capture windows...');
+  youtubeWindowA.loadFile(path.join(__dirname, '../youtube-window/youtube-player.html'));
+  youtubeWindowB.loadFile(path.join(__dirname, '../youtube-window/youtube-player.html'));
 
   // Handle window resize to adjust view layouts
   mainWindow.on('resize', () => {
@@ -132,31 +186,124 @@ function createWindow() {
     return sources;
   });
 
+  // Add IPC handler for capturing YouTube BrowserWindows
+  ipcMain.handle('capture-youtube-window', async (event, layerId) => {
+    console.log(`[YouTube Window Capture] Starting capture for layerId: ${layerId}`);
+    
+    try {
+      const targetWindow = getYouTubeWindowByLayerId(layerId);
+      
+      if (!targetWindow) {
+        throw new Error(`YouTube window not found for layer: ${layerId}`);
+      }
+      
+      // Capture the specific YouTube window content
+      const image = await targetWindow.webContents.capturePage();
+      
+      return {
+        layerId: layerId,
+        image: image.toDataURL(),
+        bounds: targetWindow.getBounds()
+      };
+      
+    } catch (error) {
+      console.error(`[YouTube Window Capture] Error for ${layerId}:`, error);
+      throw new Error(`Failed to capture YouTube window ${layerId}: ${error.message}`);
+    }
+  });
+
+  // Legacy IPC handler for capturing specific YouTube WebContentsView
+  ipcMain.handle('capture-youtube-view', async (event, layerId) => {
+    console.log(`[YouTube View Capture] Starting capture for layerId: ${layerId}`);
+    
+    try {
+      // Capture the specific YouTube view content
+      const image = await youtubeView.webContents.capturePage();
+      
+      return {
+        layerId: layerId,
+        image: image.toDataURL(),
+        bounds: youtubeView.getBounds()
+      };
+      
+    } catch (error) {
+      console.error(`[YouTube View Capture] Error for ${layerId}:`, error);
+      throw new Error(`Failed to capture YouTube view ${layerId}: ${error.message}`);
+    }
+  });
+
   // Add IPC handler for capturing specific WebContentsView
   ipcMain.handle('capture-view', async (event, viewType) => {
-    const { desktopCapturer } = require('electron');
+    console.log(`[Desktop Capture] Starting capture for viewType: ${viewType}`);
     
-    // Get all available sources
-    const sources = await desktopCapturer.getSources({
-      types: ['window'],
-      thumbnailSize: { width: 300, height: 200 }
-    });
-    
-    // Find the window that contains our app
-    const appWindow = sources.find(source => 
-      source.name.includes('YouTube Remix Stage') || 
-      source.name.includes('Electron')
-    );
-    
-    if (appWindow) {
-      return {
-        id: appWindow.id,
-        name: appWindow.name,
-        thumbnail: appWindow.thumbnail.toDataURL()
-      };
+    try {
+      // Check if we have screen recording permission on macOS
+      if (process.platform === 'darwin') {
+        const { systemPreferences } = require('electron');
+        const hasPermission = systemPreferences.getMediaAccessStatus('screen');
+        console.log(`[Desktop Capture] macOS screen access status: ${hasPermission}`);
+        
+        if (hasPermission !== 'granted') {
+          console.log('[Desktop Capture] Requesting screen access permission...');
+          systemPreferences.askForMediaAccess('screen');
+          // On macOS, we need to wait for permission to be granted
+          throw new Error('Screen recording permission required. Please grant permission in System Preferences.');
+        }
+      }
+      
+      const { desktopCapturer } = require('electron');
+      
+      console.log('[Desktop Capture] Getting available sources...');
+      
+      // Get all available sources with more permissive options
+      const sources = await desktopCapturer.getSources({
+        types: ['window', 'screen'],
+        thumbnailSize: { width: 300, height: 200 },
+        fetchWindowIcons: false
+      });
+      
+      console.log(`[Desktop Capture] Found ${sources.length} sources:`, sources.map(s => ({
+        name: s.name,
+        id: s.id.substring(0, 20) + '...'
+      })));
+      
+      if (sources.length === 0) {
+        throw new Error('No capture sources available. Check permissions.');
+      }
+      
+      // First try to find our specific app window
+      let targetSource = sources.find(source => 
+        source.name.includes('YouTube Remix Stage') || 
+        source.name.includes('Electron') ||
+        source.name.includes('remix-stage')
+      );
+      
+      // If not found, use the first screen source as fallback
+      if (!targetSource) {
+        console.log('[Desktop Capture] App window not found, looking for screen...');
+        targetSource = sources.find(source => source.name.includes('Screen')) || sources[0];
+      }
+      
+      if (targetSource) {
+        console.log(`[Desktop Capture] Selected source: "${targetSource.name}" (ID: ${targetSource.id.substring(0, 20)}...)`);
+        return {
+          id: targetSource.id,
+          name: targetSource.name,
+          thumbnail: targetSource.thumbnail.toDataURL()
+        };
+      }
+      
+      throw new Error('No suitable capture source found after checking all sources');
+      
+    } catch (error) {
+      console.error('[Desktop Capture] Error details:', {
+        message: error.message,
+        stack: error.stack,
+        name: error.name,
+        platform: process.platform
+      });
+      throw new Error(`Failed to get sources: ${error.message}`);
     }
-    
-    return null;
   });
 
   // Show window when ready (fallback)
@@ -195,6 +342,18 @@ function createWindow() {
     youtubeViewLoaded = true;
     checkAndShowWindow();
   });
+
+  youtubeWindowA.webContents.on('did-finish-load', () => {
+    console.log('YouTube Window A finished loading');
+    youtubeWindowALoaded = true;
+    checkAndShowWindow();
+  });
+
+  youtubeWindowB.webContents.on('did-finish-load', () => {
+    console.log('YouTube Window B finished loading');
+    youtubeWindowBLoaded = true;
+    checkAndShowWindow();
+  });
 }
 
 function layoutViews(width, height) {
@@ -206,66 +365,128 @@ function layoutViews(width, height) {
     height: height
   });
 
-  // Hide YouTube view for now since we handle everything in React
+  // Hide legacy YouTube view for API compatibility
   youtubeView.setBounds({
     x: -1000,
     y: -1000,
     width: 1,
     height: 1
   });
+
+  // YouTube windows are managed as separate BrowserWindows
+  // No need to adjust their bounds here - they maintain their off-screen position
 }
 
 // IPC handlers for YouTube player control
-ipcMain.handle('youtube:load-video', async (event, videoId) => {
-  youtubeView.webContents.executeJavaScript(`
-    if (window.player && window.player.loadVideoById) {
-      window.player.loadVideoById('${videoId}');
-      // Immediately pause after loading to prevent autoplay
-      setTimeout(() => {
-        if (window.player && window.player.pauseVideo) {
-          window.player.pauseVideo();
-        }
-      }, 100);
+ipcMain.handle('youtube:load-video', async (event, videoId, layerId) => {
+  console.log(`[YouTube] Loading video ${videoId} for layer ${layerId}`);
+  
+  const targetWindow = getYouTubeWindowByLayerId(layerId);
+  
+  if (targetWindow) {
+    // Load YouTube video URL directly in the dedicated window
+    const youtubeUrl = `https://www.youtube.com/watch?v=${videoId}&autoplay=1&controls=1&rel=0&modestbranding=1`;
+    console.log(`[YouTube] Loading URL: ${youtubeUrl}`);
+    
+    await targetWindow.loadURL(youtubeUrl);
+    
+    // Show the window for capture (but keep it off-screen)
+    if (!targetWindow.isVisible()) {
+      targetWindow.show();
     }
-  `);
+  }
+  
+  // Legacy compatibility - also load in main youtube view
+  const targetView = getYouTubeViewByLayerId(layerId);
+  if (targetView) {
+    await targetView.webContents.executeJavaScript(`
+      if (window.player && window.player.loadVideoById) {
+        window.player.loadVideoById('${videoId}');
+        // Immediately pause after loading to prevent autoplay
+        setTimeout(() => {
+          if (window.player && window.player.pauseVideo) {
+            window.player.pauseVideo();
+          }
+        }, 100);
+      }
+    `);
+  }
 });
 
-ipcMain.handle('youtube:play', async () => {
-  youtubeView.webContents.executeJavaScript(`
-    if (window.player && window.player.playVideo) {
-      window.player.playVideo();
-    }
-  `);
+// Helper function to get YouTube window by layer ID
+function getYouTubeWindowByLayerId(layerId) {
+  switch (layerId) {
+    case 'youtube1':
+      return youtubeWindowA;
+    case 'youtube2':
+      return youtubeWindowB;
+    default:
+      return null;
+  }
+}
+
+// Helper function to get YouTube view by layer ID (legacy compatibility)
+function getYouTubeViewByLayerId(layerId) {
+  return youtubeView; // fallback to legacy view for compatibility
+}
+
+ipcMain.handle('youtube:play', async (event, layerId) => {
+  const targetView = getYouTubeViewByLayerId(layerId);
+  
+  if (targetView) {
+    await targetView.webContents.executeJavaScript(`
+      if (window.player && window.player.playVideo) {
+        window.player.playVideo();
+      }
+    `);
+  }
 });
 
-ipcMain.handle('youtube:pause', async () => {
-  youtubeView.webContents.executeJavaScript(`
-    if (window.player && window.player.pauseVideo) {
-      window.player.pauseVideo();
-    }
-  `);
+ipcMain.handle('youtube:pause', async (event, layerId) => {
+  const targetView = getYouTubeViewByLayerId(layerId);
+  
+  if (targetView) {
+    await targetView.webContents.executeJavaScript(`
+      if (window.player && window.player.pauseVideo) {
+        window.player.pauseVideo();
+      }
+    `);
+  }
 });
 
-ipcMain.handle('youtube:set-volume', async (event, volume) => {
-  youtubeView.webContents.executeJavaScript(`
-    if (window.player && window.player.setVolume) {
-      window.player.setVolume(${volume});
-    }
-  `);
+ipcMain.handle('youtube:set-volume', async (event, volume, layerId) => {
+  const targetView = getYouTubeViewByLayerId(layerId);
+  
+  if (targetView) {
+    await targetView.webContents.executeJavaScript(`
+      if (window.player && window.player.setVolume) {
+        window.player.setVolume(${volume});
+      }
+    `);
+  }
 });
 
-ipcMain.handle('youtube:get-current-time', async () => {
-  return youtubeView.webContents.executeJavaScript(`
-    window.player && window.player.getCurrentTime ? window.player.getCurrentTime() : 0
-  `);
+ipcMain.handle('youtube:get-current-time', async (event, layerId) => {
+  const targetView = getYouTubeViewByLayerId(layerId);
+  
+  if (targetView) {
+    return await targetView.webContents.executeJavaScript(`
+      window.player && window.player.getCurrentTime ? window.player.getCurrentTime() : 0
+    `);
+  }
+  return 0;
 });
 
-ipcMain.handle('youtube:seek-to', async (event, seconds) => {
-  youtubeView.webContents.executeJavaScript(`
-    if (window.player && window.player.seekTo) {
-      window.player.seekTo(${seconds});
-    }
-  `);
+ipcMain.handle('youtube:seek-to', async (event, seconds, layerId) => {
+  const targetView = getYouTubeViewByLayerId(layerId);
+  
+  if (targetView) {
+    await targetView.webContents.executeJavaScript(`
+      if (window.player && window.player.seekTo) {
+        window.player.seekTo(${seconds});
+      }
+    `);
+  }
 });
 
 // IPC handlers for YouTube player state updates
