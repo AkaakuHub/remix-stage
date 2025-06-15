@@ -21,5 +21,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Remove OAuth callback listener
   removeOAuthCallback: () => {
     ipcRenderer.removeAllListeners('oauth-callback');
-  }
+  },
+
+  // Desktop capture methods
+  getDesktopSources: () => ipcRenderer.invoke('get-desktop-sources'),
+  captureView: (viewType) => ipcRenderer.invoke('capture-view', viewType)
 });

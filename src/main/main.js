@@ -57,14 +57,14 @@ function createWindow() {
 
   // Create main window
   mainWindow = new BrowserWindow({
-    width: 1400,
-    height: 900,
-    minWidth: 1200,
-    minHeight: 700,
+    width: 1600,
+    height: 1000,
+    minWidth: 1400,
+    minHeight: 800,
     webPreferences: createSecureWebPreferences(),
-    titleBarStyle: 'hiddenInset',
-    show: true, // Show immediately instead of waiting
-    center: true, // Center the window on screen
+    titleBarStyle: 'default',
+    show: true,
+    center: true,
     resizable: true,
     maximizable: true,
     fullscreenable: true,
@@ -122,6 +122,43 @@ function createWindow() {
     layoutViews(bounds.width, bounds.height);
   });
 
+  // Add IPC handler for desktop capture
+  ipcMain.handle('get-desktop-sources', async () => {
+    const { desktopCapturer } = require('electron');
+    const sources = await desktopCapturer.getSources({
+      types: ['window', 'screen'],
+      thumbnailSize: { width: 150, height: 150 }
+    });
+    return sources;
+  });
+
+  // Add IPC handler for capturing specific WebContentsView
+  ipcMain.handle('capture-view', async (event, viewType) => {
+    const { desktopCapturer } = require('electron');
+    
+    // Get all available sources
+    const sources = await desktopCapturer.getSources({
+      types: ['window'],
+      thumbnailSize: { width: 300, height: 200 }
+    });
+    
+    // Find the window that contains our app
+    const appWindow = sources.find(source => 
+      source.name.includes('YouTube Remix Stage') || 
+      source.name.includes('Electron')
+    );
+    
+    if (appWindow) {
+      return {
+        id: appWindow.id,
+        name: appWindow.name,
+        thumbnail: appWindow.thumbnail.toDataURL()
+      };
+    }
+    
+    return null;
+  });
+
   // Show window when ready (fallback)
   mainWindow.once('ready-to-show', () => {
     console.log('Window ready to show');
@@ -161,21 +198,20 @@ function createWindow() {
 }
 
 function layoutViews(width, height) {
-  // Main view takes left side (70% of width)
-  const mainWidth = Math.floor(width * 0.7);
+  // Main view takes full window - we handle layout internally with React
   mainView.setBounds({
     x: 0,
     y: 0,
-    width: mainWidth,
+    width: width,
     height: height
   });
 
-  // YouTube view takes right side (30% of width)
+  // Hide YouTube view for now since we handle everything in React
   youtubeView.setBounds({
-    x: mainWidth,
-    y: 0,
-    width: width - mainWidth,
-    height: height
+    x: -1000,
+    y: -1000,
+    width: 1,
+    height: 1
   });
 }
 
@@ -184,6 +220,12 @@ ipcMain.handle('youtube:load-video', async (event, videoId) => {
   youtubeView.webContents.executeJavaScript(`
     if (window.player && window.player.loadVideoById) {
       window.player.loadVideoById('${videoId}');
+      // Immediately pause after loading to prevent autoplay
+      setTimeout(() => {
+        if (window.player && window.player.pauseVideo) {
+          window.player.pauseVideo();
+        }
+      }, 100);
     }
   `);
 });
