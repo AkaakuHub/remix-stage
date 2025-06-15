@@ -1,0 +1,66 @@
+{
+  "name": "youtube-remix-stage",
+  "version": "1.0.0",
+  "description": "A compliance-focused desktop application that allows creative audiovisual mixing using YouTube as base layer with local media overlay",
+  "main": "src/main/main.js",
+  "homepage": "./",
+  "scripts": {
+    "start": "electron .",
+    "electron": "electron .",
+    "dev": "concurrently \"pnpm dev:renderer\" \"wait-on http://localhost:3000 && NODE_ENV=development electron .\"",
+    "dev:electron": "concurrently \"pnpm dev:renderer\" \"wait-on http://localhost:3000 && NODE_ENV=development electron .\"",
+    "dev:renderer": "cd src/renderer && pnpm start",
+    "dev:browser": "cd src/renderer && pnpm start",
+    "build": "pnpm build:renderer && electron-builder",
+    "build:renderer": "cd src/renderer && pnpm run build",
+    "electron:build": "pnpm build:renderer",
+    "electron:dev": "pnpm dev",
+    "dist": "pnpm build",
+    "pack": "electron-builder --dir",
+    "postinstall": "electron-builder install-app-deps"
+  },
+  "pnpm": {
+    "neverBuiltDependencies": []
+  },
+  "keywords": [
+    "youtube",
+    "remix",
+    "audio",
+    "mixing",
+    "electron",
+    "desktop"
+  ],
+  "author": "YouTube Remix Stage",
+  "license": "MIT",
+  "devDependencies": {
+    "concurrently": "^8.2.2",
+    "electron-builder": "^24.9.1",
+    "wait-on": "^7.2.0"
+  },
+  "dependencies": {
+    "electron": "^36.4.0",
+    "electron-updater": "^6.1.7"
+  },
+  "build": {
+    "appId": "com.youtube-remix-stage.app",
+    "productName": "YouTube Remix Stage",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "src/main/**/*",
+      "src/renderer/build/**/*",
+      "package.json"
+    ],
+    "mac": {
+      "category": "public.app-category.music"
+    },
+    "win": {
+      "target": "nsis"
+    },
+    "linux": {
+      "target": "AppImage"
+    }
+  },
+  "electronMain": "src/main/main.js"
+}

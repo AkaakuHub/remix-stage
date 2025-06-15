@@ -1,0 +1,2 @@
+- パッケージマネージャはnpmでなくてpnpm
+- 何か追加するときはpackage.jsonに追記するのではなくて、cliでpnpm addを使う

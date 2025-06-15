@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>YouTube Player</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background: #000;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            overflow: hidden;
+        }
+        
+        #player-container {
+            width: 100%;
+            height: 100vh;
+            position: relative;
+        }
+        
+        #player {
+            width: 100%;
+            height: 100%;
+        }
+        
+        #loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: white;
+            font-size: 14px;
+        }
+        
+        .hidden {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div id="player-container">
+        <div id="loading">Loading YouTube Player...</div>
+        <div id="player"></div>
+    </div>
+
+    <script>
+        // YouTube IFrame Player API
+        var tag = document.createElement('script');
+        tag.src = "https://www.youtube.com/iframe_api";
+        var firstScriptTag = document.getElementsByTagName('script')[0];
+        firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
+
+        var player;
+        var isPlayerReady = false;
+
+        // YouTube API callback
+        function onYouTubeIframeAPIReady() {
+            player = new YT.Player('player', {
+                height: '100%',
+                width: '100%',
+                playerVars: {
+                    'playsinline': 1,
+                    'modestbranding': 1,
+                    'rel': 0,
+                    'iv_load_policy': 3
+                },
+                events: {
+                    'onReady': onPlayerReady,
+                    'onStateChange': onPlayerStateChange,
+                    'onError': onPlayerError
+                }
+            });
+            
+            // Make player globally available
+            window.player = player;
+        }
+
+        function onPlayerReady(event) {
+            isPlayerReady = true;
+            document.getElementById('loading').classList.add('hidden');
+            
+            // Notify main process that player is ready
+            if (window.electronAPI) {
+                window.electronAPI.sendPlayerEvent('ready', {
+                    timestamp: Date.now()
+                });
+            }
+        }
+
+        function onPlayerStateChange(event) {
+            const states = {
+                '-1': 'unstarted',
+                '0': 'ended',
+                '1': 'playing',
+                '2': 'paused',
+                '3': 'buffering',
+                '5': 'cued'
+            };
+            
+            const state = states[event.data] || 'unknown';
+            
+            // Send state change to main process
+            if (window.electronAPI) {
+                window.electronAPI.sendPlayerState({
+                    state: state,
+                    data: event.data,
+                    timestamp: Date.now(),
+                    currentTime: player.getCurrentTime(),
+                    duration: player.getDuration()
+                });
+            }
+        }
+
+        function onPlayerError(event) {
+            console.error('YouTube Player Error:', event.data);
+            
+            // Send error to main process
+            if (window.electronAPI) {
+                window.electronAPI.sendPlayerEvent('error', {
+                    error: event.data,
+                    timestamp: Date.now()
+                });
+            }
+        }
+
+        // Handle window resize
+        window.addEventListener('resize', () => {
+            if (player && player.getIframe) {
+                const iframe = player.getIframe();
+                if (iframe) {
+                    iframe.style.width = '100%';
+                    iframe.style.height = '100%';
+                }
+            }
+        });
+    </script>
+</body>
+</html>
