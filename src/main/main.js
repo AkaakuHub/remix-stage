@@ -8,6 +8,8 @@ app.setAsDefaultProtocolClient('remixstage');
 let mainWindow;
 let mainView;
 let youtubeView;
+let mainViewLoaded = false;
+let youtubeViewLoaded = false;
 
 // Security configuration following best practices
 const createSecureWebPreferences = () => ({
@@ -17,7 +19,42 @@ const createSecureWebPreferences = () => ({
   preload: path.join(__dirname, '../preload/preload.js')
 });
 
+// Function to show window when both views are ready
+function checkAndShowWindow() {
+  if (mainViewLoaded && youtubeViewLoaded && mainWindow) {
+    console.log('Both views loaded, showing window');
+    mainWindow.show();
+    if (mainWindow.isMinimized()) {
+      mainWindow.restore();
+    }
+    mainWindow.focus();
+  }
+}
+
+// Function to load dev server with retry logic
+async function loadDevServerWithRetry(maxRetries = 10, delay = 1000) {
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      console.log(`Attempting to connect to development server (attempt ${i + 1}/${maxRetries})`);
+      await mainView.webContents.loadURL('http://localhost:3000');
+      console.log('Successfully connected to development server');
+      return;
+    } catch (error) {
+      console.log(`Connection attempt ${i + 1} failed:`, error.message);
+      if (i < maxRetries - 1) {
+        console.log(`Waiting ${delay}ms before next attempt...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
+    }
+  }
+  console.error('Failed to connect to development server after all retries');
+}
+
 function createWindow() {
+  // Reset load states
+  mainViewLoaded = false;
+  youtubeViewLoaded = false;
+
   // Create main window
   mainWindow = new BrowserWindow({
     width: 1400,
@@ -26,7 +63,12 @@ function createWindow() {
     minHeight: 700,
     webPreferences: createSecureWebPreferences(),
     titleBarStyle: 'hiddenInset',
-    show: false
+    show: true, // Show immediately instead of waiting
+    center: true, // Center the window on screen
+    resizable: true,
+    maximizable: true,
+    fullscreenable: true,
+    title: 'YouTube Remix Stage'
   });
 
   // Create WebContentsView for main UI
@@ -47,6 +89,11 @@ function createWindow() {
   // Add views to main window
   mainWindow.contentView.addChildView(mainView);
   mainWindow.contentView.addChildView(youtubeView);
+  
+  console.log('Window created and views added');
+  console.log('Window bounds:', mainWindow.getBounds());
+  console.log('Window visible:', mainWindow.isVisible());
+  console.log('Window minimized:', mainWindow.isMinimized());
 
   // Set initial bounds for views
   const windowBounds = mainWindow.getBounds();
@@ -54,15 +101,19 @@ function createWindow() {
 
   // Load main renderer (React app in development, built files in production)
   const isDev = process.env.NODE_ENV === 'development';
+  console.log('isDev:', isDev);
   if (isDev) {
-    mainView.webContents.loadURL('http://localhost:3000');
+    console.log('Loading development server at http://localhost:3000');
+    loadDevServerWithRetry();
     // Enable DevTools in development
     mainView.webContents.openDevTools();
   } else {
+    console.log('Loading production build from:', path.join(__dirname, '../renderer/build/index.html'));
     mainView.webContents.loadFile(path.join(__dirname, '../renderer/build/index.html'));
   }
 
   // Load YouTube view HTML
+  console.log('Loading YouTube view from:', path.join(__dirname, '../youtube-view/youtube.html'));
   youtubeView.webContents.loadFile(path.join(__dirname, '../youtube-view/youtube.html'));
 
   // Handle window resize to adjust view layouts
@@ -71,9 +122,41 @@ function createWindow() {
     layoutViews(bounds.width, bounds.height);
   });
 
-  // Show window when ready
+  // Show window when ready (fallback)
   mainWindow.once('ready-to-show', () => {
-    mainWindow.show();
+    console.log('Window ready to show');
+    if (!mainWindow.isVisible()) {
+      mainWindow.show();
+    }
+  });
+
+  // Add error handling for load failures
+  mainView.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL) => {
+    console.error('Main view failed to load:', errorCode, errorDescription, validatedURL);
+    
+    // If it's a dev server connection failure, try again
+    if (process.env.NODE_ENV === 'development' && errorCode === -102) {
+      console.log('Development server connection failed, retrying...');
+      setTimeout(() => {
+        loadDevServerWithRetry(5, 2000);
+      }, 2000);
+    }
+  });
+
+  youtubeView.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL) => {
+    console.error('YouTube view failed to load:', errorCode, errorDescription, validatedURL);
+  });
+
+  mainView.webContents.on('did-finish-load', () => {
+    console.log('Main view finished loading');
+    mainViewLoaded = true;
+    checkAndShowWindow();
+  });
+
+  youtubeView.webContents.on('did-finish-load', () => {
+    console.log('YouTube view finished loading');
+    youtubeViewLoaded = true;
+    checkAndShowWindow();
   });
 }
 
@@ -146,12 +229,16 @@ ipcMain.handle('youtube:seek-to', async (event, seconds) => {
 // IPC handlers for YouTube player state updates
 ipcMain.on('youtube-player-state', (event, state) => {
   // Forward YouTube player state to main view
-  mainView.webContents.send('youtube-state-change', state);
+  if (mainView && mainView.webContents) {
+    mainView.webContents.send('youtube-state-change', state);
+  }
 });
 
 ipcMain.on('youtube-player-event', (event, eventType, data) => {
   // Forward YouTube player events to main view
-  mainView.webContents.send('youtube-event', eventType, data);
+  if (mainView && mainView.webContents) {
+    mainView.webContents.send('youtube-event', eventType, data);
+  }
 });
 
 // YouTube API handler - executes in Node.js environment to avoid CORS
@@ -215,26 +302,39 @@ app.on('open-url', (event, url) => {
   event.preventDefault();
   if (url.startsWith('remixstage://')) {
     // Forward OAuth callback to renderer
-    mainView.webContents.send('oauth-callback', url);
+    if (mainView && mainView.webContents) {
+      mainView.webContents.send('oauth-callback', url);
+    }
   }
 });
 
 // Handle second instance for Windows/Linux OAuth
-app.on('second-instance', (event, commandLine) => {
-  const url = commandLine.find(arg => arg.startsWith('remixstage://'));
-  if (url) {
-    mainView.webContents.send('oauth-callback', url);
-  }
-  
-  // Focus main window
-  if (mainWindow) {
-    if (mainWindow.isMinimized()) mainWindow.restore();
-    mainWindow.focus();
-  }
-});
+const gotTheLock = app.requestSingleInstanceLock();
+
+if (!gotTheLock) {
+  app.quit();
+} else {
+  app.on('second-instance', (event, commandLine) => {
+    const url = commandLine.find(arg => arg.startsWith('remixstage://'));
+    if (url && mainView && mainView.webContents) {
+      mainView.webContents.send('oauth-callback', url);
+    }
+    
+    // Focus main window
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.focus();
+    }
+  });
+}
 
 // Standard Electron app lifecycle
-app.whenReady().then(createWindow);
+app.whenReady().then(() => {
+  if (process.platform === 'darwin') {
+    app.dock.show();
+  }
+  createWindow();
+});
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
